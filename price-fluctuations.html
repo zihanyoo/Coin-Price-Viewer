@@ -286,6 +286,7 @@ function getPeriodFromUrl() {
 async function fetchTopVolumeContracts() {
   const instResp = await fetch(`${BASE}/public/instruments?instType=SWAP`);
   const instJson = await instResp.json();
+  alert(instJson.code);
   if (instJson.code !== '0') throw new Error('获取合约失败');
   const validInstIds = instJson.data
     .filter(i => i.settleCcy === 'USDT' && i.state === 'live')
