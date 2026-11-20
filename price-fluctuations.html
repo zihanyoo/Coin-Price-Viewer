@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>OKX 合约涨幅排行 + K线图</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0b0e14; color: #e6e8ea; padding: 20px;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin-bottom: 2px; }
+  .sub { color: #8a8f98; font-size: 12px; margin-bottom: 16px; }
+  .layout { display: flex; gap: 20px; height: calc(100vh - 120px); min-height: 600px; }
+  .left-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  .toolbar button {
+    background: #1a1f2b; color: #c9cdd4; border: 1px solid #2a3040;
+    padding: 6px 12px; border-radius: 5px; cursor: pointer; font-size: 12px;
+  }
+  .toolbar button:hover { background: #232a38; }
+  .toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .toolbar button.active { background: #f0b90b; color: #0b0e14; border-color: #f0b90b; font-weight: 600; }
+  .toolbar button.secondary { border-color: #3a4250; }
+  #status { font-size: 12px; color: #8a8f98; margin-left: auto; }
+  .progress { height: 3px; background: #1a1f2b; border-radius: 2px; margin-bottom: 10px; overflow: hidden; display: none; }
+  .progress.show { display: block; }
+  .progress-bar { height: 100%; width: 0%; background: #f0b90b; transition: width 0.2s; }
+  .table-wrap { flex: 1; overflow-y: auto; border-radius: 6px; border: 1px solid #1e242f; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    text-align: right; padding: 10px 12px; color: #8a8f98; font-weight: 500;
+    border-bottom: 1px solid #1e242f; white-space: nowrap;
+    position: sticky; top: 0; background: #0b0e14; z-index: 1;
+  }
+  thead th:first-child { text-align: left; }
+  thead th .col-head { display: inline-flex; align-items: center; gap: 5px; }
+  .refresh-icon { cursor: pointer; font-size: 11px; opacity: 0.5; }
+  .refresh-icon:hover { opacity: 1; color: #f0b90b; }
+  .refresh-icon.spinning { animation: spin 0.8s linear infinite; opacity: 1; color: #f0b90b; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  tbody td {
+    padding: 8px 12px; text-align: right; border-bottom: 1px solid #151a22;
+    font-variant-numeric: tabular-nums;
+  }
+  tbody td:first-child { text-align: left; font-weight: 600; color: #fff; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #131820; }
+  tbody tr.selected { background: #1a2030; outline: 1px solid #f0b90b44; }
+  .price-cell { text-align: right; }
+  .price-main { font-size: 13px; color: #e6e8ea; }
+  .price-vol { font-size: 11px; color: #5a6070; margin-top: 1px; }
+  .pos { color: #0ecb81; } .neg { color: #f6465d; } .neutral { color: #8a8f98; }
+  .loading { text-align: center; padding: 40px; color: #8a8f98; }
+  .rank { display: inline-block; width: 24px; color: #8a8f98; font-weight: 400; }
+  .right-panel { flex: 1.2; min-width: 0; display: flex; flex-direction: column; background: #0f131a; border-radius: 8px; border: 1px solid #1e242f; overflow: hidden; }
+  .chart-header {
+    padding: 12px 16px; border-bottom: 1px solid #1e242f;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .chart-title { font-size: 15px; font-weight: 600; }
+  .chart-title .symbol { color: #f0b90b; }
+  .chart-legend { font-size: 11px; color: #8a8f98; display: flex; gap: 12px; flex-wrap: wrap; }
+  .chart-legend span { white-space: nowrap; }
+  #chartContainer { flex: 1; min-height: 0; }
+  .chart-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #5a6070; font-size: 14px; }
+
+  .mobile-sheet { display: none; }
+  @media (max-width: 768px) {
+    body { padding: 12px; }
+    .sub { margin-bottom: 10px; }
+    .layout { height: auto; min-height: 0; display: block; }
+    .left-panel { height: auto; }
+    .table-wrap { max-height: calc(100vh - 200px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    .right-panel { display: none; }
+
+    .mobile-sheet { display: block; position: fixed; inset: 0; z-index: 1000; pointer-events: none; }
+    .mobile-sheet.open { pointer-events: auto; }
+    .sheet-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.6); opacity: 0; transition: opacity 0.25s; }
+    .mobile-sheet.open .sheet-overlay { opacity: 1; }
+    .sheet-body {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      height: 78vh; max-height: 78vh;
+      background: #0f131a; border-radius: 16px 16px 0 0;
+      border: 1px solid #1e242f; border-bottom: none;
+      transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.3, 1);
+      display: flex; flex-direction: column;
+      box-shadow: 0 -8px 30px rgba(0,0,0,0.5);
+    }
+    .mobile-sheet.open .sheet-body { transform: translateY(0); }
+    .sheet-drag { padding: 8px 0 4px; display: flex; justify-content: center; }
+    .sheet-drag::before { content: ''; width: 36px; height: 4px; background: #2a3040; border-radius: 2px; }
+    .sheet-header {
+      padding: 4px 16px 10px; display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid #1e242f;
+    }
+    .sheet-header .chart-title { font-size: 16px; }
+    .sheet-close {
+      background: #1a1f2b; border: 1px solid #2a3040; color: #c9cdd4;
+      width: 30px; height: 30px; border-radius: 50%; font-size: 16px;
+      display: flex; align-items: center; justify-content: center; cursor: pointer;
+    }
+    .sheet-legend { font-size: 10px; color: #8a8f98; display: flex; gap: 10px; padding: 8px 16px 0; flex-wrap: wrap; }
+    .sheet-legend span { white-space: nowrap; }
+    .sheet-chart { flex: 1; min-height: 0; position: relative; }
+    .sheet-chart-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #5a6070; font-size: 14px; }
+    .sheet-nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+      border-top: 1px solid #1e242f; background: #0f131a;
+    }
+    .nav-btn {
+      background: #1a1f2b; border: 1px solid #2a3040; color: #c9cdd4;
+      padding: 10px 22px; border-radius: 8px; font-size: 14px; cursor: pointer;
+      display: flex; align-items: center; gap: 6px; min-width: 100px; justify-content: center;
+    }
+    .nav-btn:active { background: #232a38; }
+    .nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .nav-index { font-size: 12px; color: #8a8f98; }
+  }
+</style>
+</head>
+<body>
+
+<h1>OKX 合约涨幅排行</h1>
+<div class="sub">仅 USDT 本位永续 · 排除 TradFi · 成交量 Top 200 · 周期未过半时显示上一完整周期涨幅</div>
+
+<div class="layout">
+  <div class="right-panel">
+    <div class="chart-header">
+      <div class="chart-title" id="chartTitle"><span class="symbol">—</span> <span style="color:#8a8f98;font-size:12px;font-weight:400;">选择左侧合约查看K线</span></div>
+      <div class="chart-legend">
+        <span style="color:#f0b90b;">MA10</span>
+        <span style="color:#e040fb;">MA20</span>
+        <span style="color:#40c4ff;">MA60</span>
+        <span style="color:#ffab40;">MA120</span>
+      </div>
+    </div>
+    <div id="chartContainer">
+      <div class="chart-empty">点击左侧合约行加载图表</div>
+    </div>
+  </div>
+
+  <div class="left-panel">
+    <div class="toolbar">
+      <button class="period-btn active" data-period="chg15m" onclick="switchPeriod('chg15m')">15分钟</button>
+      <button class="period-btn" data-period="chg30m" onclick="switchPeriod('chg30m')">30分钟</button>
+      <button class="period-btn" data-period="chg4h" onclick="switchPeriod('chg4h')">4小时</button>
+      <button id="refreshBtn" class="secondary" onclick="refreshCurrent()" style="margin-left:8px;">刷新全部</button>
+      <button id="rescreenBtn" onclick="rescreenByVolume()">重新筛选</button>
+      <span id="status">准备加载...</span>
+    </div>
+    <div class="progress" id="progress"><div class="progress-bar" id="progressBar"></div></div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;"># / 合约</th>
+            <th><span class="col-head">15分钟 <span class="refresh-icon" data-period="chg15m" onclick="event.stopPropagation();refreshColumn('chg15m', this)">⟳</span></span></th>
+            <th><span class="col-head">30分钟 <span class="refresh-icon" data-period="chg30m" onclick="event.stopPropagation();refreshColumn('chg30m', this)">⟳</span></span></th>
+            <th><span class="col-head">4小时 <span class="refresh-icon" data-period="chg4h" onclick="event.stopPropagation();refreshColumn('chg4h', this)">⟳</span></span></th>
+            <th>最新价格</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="5" class="loading">加载中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="mobile-sheet" id="mobileSheet">
+  <div class="sheet-overlay" onclick="closeMobileSheet()"></div>
+  <div class="sheet-body">
+    <div class="sheet-drag"></div>
+    <div class="sheet-header">
+      <div class="chart-title" id="mobileChartTitle"><span class="symbol">—</span></div>
+      <button class="sheet-close" onclick="closeMobileSheet()">✕</button>
+    </div>
+    <div class="sheet-legend">
+      <span style="color:#f0b90b;">MA10</span>
+      <span style="color:#e040fb;">MA20</span>
+      <span style="color:#40c4ff;">MA60</span>
+      <span style="color:#ffab40;">MA120</span>
+    </div>
+    <div class="sheet-chart" id="mobileChartContainer">
+      <div class="sheet-chart-empty">加载K线...</div>
+    </div>
+    <div class="sheet-nav">
+      <button class="nav-btn" id="prevBtn" onclick="navigateCoin(-1)">‹ 上一个</button>
+      <span class="nav-index" id="navIndex">—</span>
+      <button class="nav-btn" id="nextBtn" onclick="navigateCoin(1)">下一个 ›</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = 'https://www.okx.com/api/v5';
+const TOP_N = 20;
+const VOLUME_TOP_N = 200;
+const VISIBLE_BARS = 100;
+const RIGHT_PADDING_BARS = 5;
+const IS_MOBILE = () => window.innerWidth <= 768;
+
+// OKX的API限制每秒最多5次请求，超过会返回429错误，所以我们分批请求，每批5个合约，间隔100ms
+const BATCH_SIZE = 5;
+const BATCH_INTERVAL_MS = 100;
+
+const PERIOD_MS = {
+  '15m': 15 * 60 * 1000,
+  '30m': 30 * 60 * 1000,
+  '4H':  4 * 60 * 60 * 1000,
+};
+
+const TRADFI_BLACKLIST = new Set([
+  'SOXX','XLF','SSPC','TXN','SOFI','VICR','TLT','ADI','FLEX','MELI','PEP','UMC',
+  'VST','GE','NVO','ABBV','AMGN','CEG','BAC','IBKR','MPWR','US100','US500','JP225','XAU'
+]);
+
+const PERIODS = {
+  chg15m: { bar: '15m', url: '15m' },
+  chg30m: { bar: '30m', url: '30m' },
+  chg4h:  { bar: '4H',  url: '4h'  },
+};
+
+const URL_TO_PERIOD = { '15m': 'chg15m', '30m': 'chg30m', '4h': 'chg4h' };
+
+let allData = [];
+let currentInstIds = [];
+let currentPeriod = 'chg15m';
+let loading = false;
+let selectedInstId = null;
+
+let periodLoadedAt = { chg15m: 0, chg30m: 0, chg4h: 0 };
+
+let chart = null;
+let candleSeries = null;
+let volumeSeries = null;
+let maSeries = { ma10: null, ma20: null, ma60: null, ma120: null };
+
+let mobileChart = null;
+let mobileCandleSeries = null;
+let mobileVolumeSeries = null;
+let mobileMaSeries = { ma10: null, ma20: null, ma60: null, ma120: null };
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function extractBase(instId) { return instId.split('-')[0]; }
+function isTradFi(instId) { return TRADFI_BLACKLIST.has(extractBase(instId)); }
+
+function isCacheValid(periodKey) {
+  const loadedAt = periodLoadedAt[periodKey] || 0;
+  if (loadedAt === 0) return false;
+  const halfPeriod = PERIOD_MS[PERIODS[periodKey].bar] / 2;
+  return loadedAt >= Date.now() - halfPeriod;
+}
+
+/* ---------- 剪贴板 ---------- */
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+    }
+  } catch (e) { console.warn('复制失败:', e); }
+}
+
+/* ---------- URL ---------- */
+function updateUrlPeriod() {
+  const url = new URL(window.location);
+  url.searchParams.set('period', PERIODS[currentPeriod].url);
+  history.replaceState(null, '', url);
+}
+function getPeriodFromUrl() {
+  const p = new URL(window.location).searchParams.get('period');
+  return URL_TO_PERIOD[p] || 'chg15m';
+}
+
+/* ---------- REST ---------- */
+async function fetchTopVolumeContracts() {
+  const instResp = await fetch(`${BASE}/public/instruments?instType=SWAP`);
+  const instJson = await instResp.json();
+  if (instJson.code !== '0') throw new Error('获取合约失败');
+  const validInstIds = instJson.data
+    .filter(i => i.settleCcy === 'USDT' && i.state === 'live')
+    .filter(i => !isTradFi(i.instId)).map(i => i.instId);
+
+  const tickerResp = await fetch(`${BASE}/market/tickers?instType=SWAP`);
+  const tickerJson = await tickerResp.json();
+  if (tickerJson.code !== '0') throw new Error('获取行情失败');
+  const tickerMap = {};
+  tickerJson.data.forEach(t => { tickerMap[t.instId] = t; });
+
+  return validInstIds.filter(id => tickerMap[id])
+    .map(id => ({ instId: id, volCcy24h: parseFloat(tickerMap[id].volCcy24h) || 0 }))
+    .sort((a, b) => b.volCcy24h - a.volCcy24h)
+    .slice(0, VOLUME_TOP_N).map(item => item.instId);
+}
+
+async function fetchTickerMap(instIds) {
+  const resp = await fetch(`${BASE}/market/tickers?instType=SWAP`);
+  const json = await resp.json();
+  if (json.code !== '0') throw new Error('获取行情失败');
+  const map = {};
+  json.data.forEach(t => { map[t.instId] = t; });
+  const filtered = {};
+  instIds.forEach(id => { if (map[id]) filtered[id] = map[id]; });
+  return filtered;
+}
+
+async function fetchChange(instId, bar, retry = 0) {
+  try {
+    const resp = await fetch(`${BASE}/market/candles?instId=${instId}&bar=${bar}&limit=3`);
+    if (resp.status === 429 && retry < 2) {
+      await sleep(500 * (retry + 1));
+      return fetchChange(instId, bar, retry + 1);
+    }
+    const json = await resp.json();
+    if (json.code !== '0' || !json.data || json.data.length < 3) return null;
+    const latestTs = parseInt(json.data[0][0]);
+    const periodMs = PERIOD_MS[bar];
+    const elapsed = Date.now() - latestTs;
+    const half = periodMs / 2;
+    let latestClose, prevClose;
+    if (elapsed >= half) {
+      latestClose = parseFloat(json.data[0][4]);
+      prevClose = parseFloat(json.data[1][4]);
+    } else {
+      latestClose = parseFloat(json.data[1][4]);
+      prevClose = parseFloat(json.data[2][4]);
+    }
+    if (prevClose === 0) return null;
+    return (latestClose - prevClose) / prevClose * 100;
+  } catch (e) {
+    if (retry < 2) {
+      await sleep(500 * (retry + 1));
+      return fetchChange(instId, bar, retry + 1);
+    }
+    return null;
+  }
+}
+
+async function fetchSinglePeriodForContracts(instIds, periodKey) {
+  const bar = PERIODS[periodKey].bar;
+  const total = instIds.length; let completed = 0;
+  const results = {};
+  for (let i = 0; i < instIds.length; i += BATCH_SIZE) {
+    const batch = instIds.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.allSettled(batch.map(id => fetchChange(id, bar)));
+    batchResults.forEach((r, idx) => { results[batch[idx]] = r.status === 'fulfilled' ? r.value : null; });
+    completed += batch.length; updateProgress(completed, total);
+    if (i + BATCH_SIZE < instIds.length) await sleep(BATCH_INTERVAL_MS);
+  }
+  return results;
+}
+
+/* ---------- 流程 ---------- */
+function getSortedVisible() {
+  return allData
+    .filter(r => r[currentPeriod] != null && !isNaN(r[currentPeriod]))
+    .sort((a, b) => b[currentPeriod] - a[currentPeriod])
+    .slice(0, TOP_N);
+}
+
+function getFirstVisibleRow() {
+  const sorted = getSortedVisible();
+  return sorted.length > 0 ? sorted[0] : null;
+}
+
+async function rescreenByVolume() {
+  if (loading) return; loading = true; setButtonsDisabled(true);
+  const status = document.getElementById('status'), tbody = document.getElementById('tbody');
+  showProgress();
+  try {
+    status.textContent = '获取成交量排行...';
+    const topInstIds = await fetchTopVolumeContracts();
+    currentInstIds = topInstIds;
+    status.textContent = `筛选 ${topInstIds.length} 个合约，获取行情...`;
+    const tickerMap = await fetchTickerMap(topInstIds);
+    status.textContent = `计算 ${PERIODS[currentPeriod].bar} 涨幅...`;
+    const results = await fetchSinglePeriodForContracts(topInstIds, currentPeriod);
+    allData = topInstIds.map(instId => {
+      const t = tickerMap[instId];
+      return { instId, symbol: extractBase(instId),
+        last: t ? parseFloat(t.last) : null, volCcy24h: t ? parseFloat(t.volCcy24h) : null,
+        chg15m: null, chg30m: null, chg4h: null, [currentPeriod]: results[instId] };
+    });
+    periodLoadedAt[currentPeriod] = Date.now();
+    renderTable();
+    status.textContent = `已更新 ${allData.length} 个合约 · ${new Date().toLocaleTimeString()}`;
+
+    if (!IS_MOBILE() && (!selectedInstId || !allData.find(d => d.instId === selectedInstId))) {
+      const first = getFirstVisibleRow();
+      if (first) selectRow(first.instId);
+    }
+  } catch (e) { console.error(e); status.textContent = '加载失败'; tbody.innerHTML = '<tr><td colspan="5" class="loading">加载失败</td></tr>'; }
+  finally { loading = false; setButtonsDisabled(false); hideProgress(); }
+}
+
+async function refreshCurrent() {
+  if (loading) return; if (currentInstIds.length === 0) return rescreenByVolume();
+  loading = true; setButtonsDisabled(true); showProgress();
+  const status = document.getElementById('status');
+  try {
+    status.textContent = `刷新行情...`;
+    const tickerMap = await fetchTickerMap(currentInstIds);
+    status.textContent = `重新计算三个周期涨幅...`;
+    const periodResults = { chg15m: {}, chg30m: {}, chg4h: {} };
+    for (const key of Object.keys(PERIODS)) {
+      Object.assign(periodResults[key], await fetchSinglePeriodForContracts(currentInstIds, key));
+    }
+    allData = currentInstIds.map(instId => {
+      const t = tickerMap[instId], prev = allData.find(d => d.instId === instId);
+      return { instId, symbol: extractBase(instId),
+        last: t ? parseFloat(t.last) : (prev ? prev.last : null),
+        volCcy24h: t ? parseFloat(t.volCcy24h) : (prev ? prev.volCcy24h : null),
+        chg15m: periodResults.chg15m[instId], chg30m: periodResults.chg30m[instId], chg4h: periodResults.chg4h[instId] };
+    });
+    const now = Date.now();
+    periodLoadedAt.chg15m = now; periodLoadedAt.chg30m = now; periodLoadedAt.chg4h = now;
+    renderTable(); status.textContent = `已刷新全部 · ${new Date().toLocaleTimeString()}`;
+  } catch (e) { status.textContent = '刷新失败'; }
+  finally { loading = false; setButtonsDisabled(false); hideProgress(); }
+}
+
+async function refreshColumn(periodKey, iconEl) {
+  if (loading) return; if (currentInstIds.length === 0) return rescreenByVolume();
+  loading = true; setButtonsDisabled(true); iconEl.classList.add('spinning'); showProgress();
+  const status = document.getElementById('status');
+  try {
+    status.textContent = `刷新该列...`;
+    const results = await fetchSinglePeriodForContracts(currentInstIds, periodKey);
+    allData = allData.map(row => ({ ...row, [periodKey]: results[row.instId] !== undefined ? results[row.instId] : row[periodKey] }));
+    periodLoadedAt[periodKey] = Date.now();
+    renderTable(); status.textContent = `该列已刷新 · ${new Date().toLocaleTimeString()}`;
+  } catch (e) { status.textContent = '刷新失败'; }
+  finally { loading = false; setButtonsDisabled(false); iconEl.classList.remove('spinning'); hideProgress(); }
+}
+
+async function switchPeriod(key) {
+  if (loading) return;
+
+  currentPeriod = key;
+  updateUrlPeriod();
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.toggle('active', b.dataset.period === key));
+
+  const cacheOk = isCacheValid(key);
+  console.log('[switchPeriod]', key,
+    'loadedAt=', periodLoadedAt[key],
+    'now=', Date.now(),
+    'half=', PERIOD_MS[PERIODS[key].bar] / 2,
+    'cacheOk=', cacheOk);
+
+  if (cacheOk) {
+    renderTable();
+    document.getElementById('status').textContent = `使用缓存（半周期内）`;
+    const visible = getSortedVisible();
+    if (selectedInstId && !visible.find(r => r.instId === selectedInstId) && visible.length > 0) {
+      selectedInstId = visible[0].instId;
+      renderTable();
+    }
+    return;
+  }
+
+  if (currentInstIds.length === 0) return rescreenByVolume();
+  loading = true; setButtonsDisabled(true); showProgress();
+  const status = document.getElementById('status');
+  try {
+    status.textContent = `加载 ${PERIODS[key].bar} 数据...`;
+    const results = await fetchSinglePeriodForContracts(currentInstIds, key);
+    allData = allData.map(row => ({ ...row, [key]: results[row.instId] !== undefined ? results[row.instId] : row[key] }));
+    periodLoadedAt[key] = Date.now();
+    renderTable();
+    status.textContent = `已加载 ${PERIODS[key].bar} · ${new Date().toLocaleTimeString()}`;
+
+    const visible = getSortedVisible();
+    let targetInst = selectedInstId;
+    if (!targetInst || !visible.find(r => r.instId === targetInst)) {
+      targetInst = visible.length > 0 ? visible[0].instId : null;
+      if (targetInst) { selectedInstId = targetInst; renderTable(); }
+    }
+    if (targetInst) {
+      if (IS_MOBILE()) {
+        if (document.getElementById('mobileSheet').classList.contains('open')) await loadMobileChart(targetInst);
+      } else {
+        await loadDesktopChart(targetInst);
+      }
+    }
+  } catch (e) { status.textContent = '加载失败'; }
+  finally { loading = false; setButtonsDisabled(false); hideProgress(); }
+}
+
+/* ---------- UI ---------- */
+function setButtonsDisabled(d) {
+  document.getElementById('refreshBtn').disabled = d;
+  document.getElementById('rescreenBtn').disabled = d;
+  document.querySelectorAll('.period-btn').forEach(b => b.disabled = d);
+  document.querySelectorAll('.refresh-icon').forEach(el => el.style.pointerEvents = d ? 'none' : 'auto');
+}
+function showProgress() { document.getElementById('progress').classList.add('show'); document.getElementById('progressBar').style.width = '0%'; }
+function hideProgress() { document.getElementById('progress').classList.remove('show'); }
+function updateProgress(c, t) {
+  const pct = Math.round(c / t * 100);
+  document.getElementById('progressBar').style.width = pct + '%';
+  document.getElementById('status').textContent = `计算 ${c}/${t} (${pct}%)`;
+}
+
+function fmtVol(v) {
+  if (v == null || isNaN(v)) return '—';
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K';
+  return v.toFixed(2);
+}
+function fmtPrice(p) {
+  if (p == null || isNaN(p)) return '—';
+  if (p >= 1000) return p.toFixed(2);
+  if (p >= 1) return p.toFixed(4);
+  if (p >= 0.0001) return p.toFixed(6);
+  return p.toFixed(8);
+}
+function fmtChg(v) { if (v == null || isNaN(v)) return '—'; return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; }
+function chgClass(v) { if (v == null || isNaN(v)) return 'neutral'; return v >= 0 ? 'pos' : 'neg'; }
+
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  const sorted = getSortedVisible();
+  if (sorted.length === 0) { tbody.innerHTML = '<tr><td colspan="5" class="loading">暂无数据</td></tr>'; return; }
+
+  tbody.innerHTML = sorted.map((r, i) => `
+    <tr class="${r.instId === selectedInstId ? 'selected' : ''}" onclick="selectRow('${r.instId}')">
+      <td class="symbol-cell">
+        <span class="rank">${i + 1}</span>
+        <span class="symbol">${r.symbol}</span>
+      </td>
+      <td class="${chgClass(r.chg15m)}">${fmtChg(r.chg15m)}</td>
+      <td class="${chgClass(r.chg30m)}">${fmtChg(r.chg30m)}</td>
+      <td class="${chgClass(r.chg4h)}">${fmtChg(r.chg4h)}</td>
+      <td class="price-cell">
+        <div class="price-main">$${fmtPrice(r.last)}</div>
+        <div class="price-vol">${fmtVol(r.volCcy24h)}</div>
+      </td>
+    </tr>`).join('');
+}
+
+/* ---------- 涨幅文本 ---------- */
+function getPeriodChangeText(instId) {
+  const row = allData.find(d => d.instId === instId);
+  if (!row) return '';
+  const v = row[currentPeriod];
+  if (v == null || isNaN(v)) return '';
+  const color = v >= 0 ? '#0ecb81' : '#f6465d';
+  const sign = v >= 0 ? '+' : '';
+  return ` <span style="color:${color};font-size:12px;font-weight:500;">(${sign}${v.toFixed(2)}%)</span>`;
+}
+
+/* ---------- 图表通用 ---------- */
+function calcMA(candles, period) {
+  const result = [];
+  for (let i = 0; i < candles.length; i++) {
+    if (i < period - 1) continue;
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) sum += candles[j].close;
+    result.push({ time: candles[i].time, value: sum / period });
+  }
+  return result;
+}
+
+async function fetchCandles(instId, bar) {
+  const resp = await fetch(`${BASE}/market/candles?instId=${instId}&bar=${bar}&limit=300`);
+  const json = await resp.json();
+  if (json.code !== '0' || !json.data || json.data.length === 0) throw new Error('无K线数据');
+  const raw = json.data.reverse();
+  return raw.map(d => ({
+    time: Math.floor(parseInt(d[0]) / 1000),
+    open: parseFloat(d[1]), high: parseFloat(d[2]),
+    low: parseFloat(d[3]), close: parseFloat(d[4]),
+    volume: parseFloat(d[5]),
+  }));
+}
+
+function applyCandlesToChart(candles, seriesObj) {
+  const { candle, volume, ma } = seriesObj;
+  candle.setData(candles.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
+  volume.setData(candles.map(c => ({
+    time: c.time, value: c.volume,
+    color: c.close >= c.open ? 'rgba(14,203,129,0.4)' : 'rgba(246,70,93,0.4)',
+  })));
+  ma.ma10.setData(calcMA(candles, 10));
+  ma.ma20.setData(calcMA(candles, 20));
+  ma.ma60.setData(calcMA(candles, 60));
+  ma.ma120.setData(calcMA(candles, 120));
+}
+
+/* ---------- 桌面端图表 ---------- */
+function initChart() {
+  const container = document.getElementById('chartContainer');
+  container.innerHTML = '';
+  chart = LightweightCharts.createChart(container, {
+    layout: { background: { color: '#0f131a' }, textColor: '#8a8f98' },
+    grid: { vertLines: { color: '#1a1f2b' }, horzLines: { color: '#1a1f2b' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: '#1e242f', scaleMargins: { top: 0.1, bottom: 0.25 } },
+    timeScale: { borderColor: '#1e242f', timeVisible: true },
+    autoSize: true,
+  });
+  candleSeries = chart.addCandlestickSeries({
+    upColor: '#0ecb81', downColor: '#f6465d',
+    borderUpColor: '#0ecb81', borderDownColor: '#f6465d',
+    wickUpColor: '#0ecb81', wickDownColor: '#f6465d',
+  });
+  volumeSeries = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'volume' });
+  volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.75, bottom: 0 } });
+  maSeries.ma10 = chart.addLineSeries({ color: '#f0b90b', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+  maSeries.ma20 = chart.addLineSeries({ color: '#e040fb', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+  maSeries.ma60 = chart.addLineSeries({ color: '#40c4ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+  maSeries.ma120 = chart.addLineSeries({ color: '#ffab40', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+}
+
+async function loadDesktopChart(instId) {
+  const bar = PERIODS[currentPeriod].bar;
+  const periodLabel = currentPeriod === 'chg15m' ? '15分钟' : currentPeriod === 'chg30m' ? '30分钟' : '4小时';
+  document.getElementById('chartTitle').innerHTML =
+    `<span class="symbol">${extractBase(instId)}</span> ` +
+    `<span style="color:#8a8f98;font-size:12px;font-weight:400;">${periodLabel}</span>` +
+    getPeriodChangeText(instId);
+  const container = document.getElementById('chartContainer');
+  container.innerHTML = '<div class="chart-empty">加载K线...</div>';
+  try {
+    const candles = await fetchCandles(instId, bar);
+    initChart();
+    applyCandlesToChart(candles, { candle: candleSeries, volume: volumeSeries, ma: maSeries });
+    const total = candles.length;
+    chart.timeScale().setVisibleLogicalRange({
+      from: Math.max(0, total - VISIBLE_BARS),
+      to: total - 1 + RIGHT_PADDING_BARS,
+    });
+  } catch (e) {
+    console.error(e);
+    container.innerHTML = '<div class="chart-empty">K线加载失败</div>';
+  }
+}
+
+/* ---------- 手机端图表 ---------- */
+function initMobileChart() {
+  const container = document.getElementById('mobileChartContainer');
+  container.innerHTML = '';
+  mobileChart = LightweightCharts.createChart(container, {
+    layout: { background: { color: '#0f131a' }, textColor: '#8a8f98' },
+    grid: { vertLines: { color: '#1a1f2b' }, horzLines: { color: '#1a1f2b' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: '#1e242f', scaleMargins: { top: 0.1, bottom: 0.25 } },
+    timeScale: { borderColor: '#1e242f', timeVisible: true },
+    autoSize: true,
+  });
+  mobileCandleSeries = mobileChart.addCandlestickSeries({
+    upColor: '#0ecb81', downColor: '#f6465d',
+    borderUpColor: '#0ecb81', borderDownColor: '#f6465d',
+    wickUpColor: '#0ecb81', wickDownColor: '#f6465d',
+  });
+  mobileVolumeSeries = mobileChart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'volume' });
+  mobileVolumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.75, bottom: 0 } });
+  mobileMaSeries.ma10 = mobileChart.addLineSeries({ color: '#f0b90b', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+  mobileMaSeries.ma20 = mobileChart.addLineSeries({ color: '#e040fb', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+  mobileMaSeries.ma60 = mobileChart.addLineSeries({ color: '#40c4ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+  mobileMaSeries.ma120 = mobileChart.addLineSeries({ color: '#ffab40', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+}
+
+async function loadMobileChart(instId) {
+  const bar = PERIODS[currentPeriod].bar;
+  const periodLabel = currentPeriod === 'chg15m' ? '15分钟' : currentPeriod === 'chg30m' ? '30分钟' : '4小时';
+  document.getElementById('mobileChartTitle').innerHTML =
+    `<span class="symbol">${extractBase(instId)}</span> ` +
+    `<span style="color:#8a8f98;font-size:12px;font-weight:400;">${periodLabel}</span>` +
+    getPeriodChangeText(instId);
+
+  const container = document.getElementById('mobileChartContainer');
+  container.innerHTML = '<div class="sheet-chart-empty">加载K线...</div>';
+  updateNavButtons();
+
+  try {
+    const candles = await fetchCandles(instId, bar);
+    initMobileChart();
+    applyCandlesToChart(candles, { candle: mobileCandleSeries, volume: mobileVolumeSeries, ma: mobileMaSeries });
+    const total = candles.length;
+    mobileChart.timeScale().setVisibleLogicalRange({
+      from: Math.max(0, total - VISIBLE_BARS),
+      to: total - 1 + RIGHT_PADDING_BARS,
+    });
+  } catch (e) {
+    console.error(e);
+    container.innerHTML = '<div class="sheet-chart-empty">K线加载失败</div>';
+  }
+}
+
+/* ---------- 选中与弹层 ---------- */
+async function selectRow(instId) {
+  selectedInstId = instId;
+  renderTable();
+
+  const symbol = extractBase(instId);
+  copyToClipboard(symbol);
+
+  if (IS_MOBILE()) {
+    openMobileSheet();
+    await loadMobileChart(instId);
+  } else {
+    await loadDesktopChart(instId);
+  }
+}
+
+function openMobileSheet() {
+  const sheet = document.getElementById('mobileSheet');
+  if (!sheet.classList.contains('open')) {
+    sheet.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+}
+
+function closeMobileSheet() {
+  const sheet = document.getElementById('mobileSheet');
+  sheet.classList.remove('open');
+  document.body.style.overflow = '';
+  setTimeout(() => {
+    const container = document.getElementById('mobileChartContainer');
+    if (!sheet.classList.contains('open')) container.innerHTML = '';
+    mobileChart = null;
+  }, 300);
+}
+
+/* ---------- 上一个 / 下一个 ---------- */
+function updateNavButtons() {
+  const visible = getSortedVisible();
+  const idx = visible.findIndex(r => r.instId === selectedInstId);
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const navIndex = document.getElementById('navIndex');
+  if (idx === -1) {
+    prevBtn.disabled = true; nextBtn.disabled = true;
+    navIndex.textContent = '—';
+    return;
+  }
+  prevBtn.disabled = idx <= 0;
+  nextBtn.disabled = idx >= visible.length - 1;
+  navIndex.textContent = `${idx + 1} / ${visible.length}`;
+}
+
+async function navigateCoin(delta) {
+  const visible = getSortedVisible();
+  const idx = visible.findIndex(r => r.instId === selectedInstId);
+  if (idx === -1) return;
+  const newIdx = idx + delta;
+  if (newIdx < 0 || newIdx >= visible.length) return;
+  const target = visible[newIdx];
+  selectedInstId = target.instId;
+  renderTable();
+  copyToClipboard(target.symbol);
+  updateNavButtons();
+  await loadMobileChart(target.instId);
+}
+
+/* ---------- 初始化 ---------- */
+(function init() {
+  currentPeriod = getPeriodFromUrl();
+  document.querySelectorAll('.period-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.period === currentPeriod);
+  });
+  updateUrlPeriod();
+  rescreenByVolume();
+
+  window.addEventListener('resize', () => {
+    if (!IS_MOBILE()) {
+      const sheet = document.getElementById('mobileSheet');
+      if (sheet.classList.contains('open')) {
+        sheet.classList.remove('open');
+        document.body.style.overflow = '';
+      }
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
