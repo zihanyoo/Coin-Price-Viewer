@@ -37,7 +37,7 @@
   }
   thead th:first-child { text-align: left; }
   thead th .col-head { display: inline-flex; align-items: center; gap: 5px; }
-  .refresh-icon { cursor: pointer; font-size: 11px; opacity: 0.5; }
+  .refresh-icon { cursor: pointer; font-size: 18px; opacity: 0.5; }
   .refresh-icon:hover { opacity: 1; color: #f0b90b; }
   .refresh-icon.spinning { animation: spin 0.8s linear infinite; opacity: 1; color: #f0b90b; }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -148,8 +148,8 @@
       <button class="period-btn active" data-period="chg15m" onclick="switchPeriod('chg15m')">15分钟</button>
       <button class="period-btn" data-period="chg30m" onclick="switchPeriod('chg30m')">30分钟</button>
       <button class="period-btn" data-period="chg4h" onclick="switchPeriod('chg4h')">4小时</button>
-      <button id="refreshBtn" class="secondary" onclick="refreshCurrent()" style="margin-left:8px;">刷新全部</button>
-      <button id="rescreenBtn" onclick="rescreenByVolume()">重新筛选</button>
+      <button id="rescreenBtn" onclick="rescreenByVolume()">重筛当前列</button>
+      <button id="refreshBtn" class="secondary" onclick="refreshCurrent()" style="margin-left:8px;">重筛全部</button>
       <span id="status">准备加载...</span>
     </div>
     <div class="progress" id="progress"><div class="progress-bar" id="progressBar"></div></div>
@@ -200,14 +200,16 @@
 <script>
 const BASE = 'https://www.okx.com/api/v5';
 const TOP_N = 20;
-const VOLUME_TOP_N = 200;
-const VISIBLE_BARS = 100;
+const VOLUME_TOP_N = 300;
+const VISIBLE_BARS = 120;
 const RIGHT_PADDING_BARS = 5;
 const IS_MOBILE = () => window.innerWidth <= 768;
 
 // OKX的API限制每秒最多5次请求，超过会返回429错误，所以我们分批请求，每批5个合约，间隔100ms
 const BATCH_SIZE = 5;
 const BATCH_INTERVAL_MS = 100;
+
+const DEFAULT_PERIOD = 'chg30m';
 
 const PERIOD_MS = {
   '15m': 15 * 60 * 1000,
@@ -230,7 +232,7 @@ const URL_TO_PERIOD = { '15m': 'chg15m', '30m': 'chg30m', '4h': 'chg4h' };
 
 let allData = [];
 let currentInstIds = [];
-let currentPeriod = 'chg15m';
+let currentPeriod = DEFAULT_PERIOD;
 let loading = false;
 let selectedInstId = null;
 
@@ -279,14 +281,13 @@ function updateUrlPeriod() {
 }
 function getPeriodFromUrl() {
   const p = new URL(window.location).searchParams.get('period');
-  return URL_TO_PERIOD[p] || 'chg15m';
+  return URL_TO_PERIOD[p] || DEFAULT_PERIOD;
 }
 
 /* ---------- REST ---------- */
 async function fetchTopVolumeContracts() {
   const instResp = await fetch(`${BASE}/public/instruments?instType=SWAP`);
   const instJson = await instResp.json();
-  alert(instJson.code);
   if (instJson.code !== '0') throw new Error('获取合约失败');
   const validInstIds = instJson.data
     .filter(i => i.settleCcy === 'USDT' && i.state === 'live')
@@ -452,12 +453,6 @@ async function switchPeriod(key) {
   document.querySelectorAll('.period-btn').forEach(b => b.classList.toggle('active', b.dataset.period === key));
 
   const cacheOk = isCacheValid(key);
-  console.log('[switchPeriod]', key,
-    'loadedAt=', periodLoadedAt[key],
-    'now=', Date.now(),
-    'half=', PERIOD_MS[PERIODS[key].bar] / 2,
-    'cacheOk=', cacheOk);
-
   if (cacheOk) {
     renderTable();
     document.getElementById('status').textContent = `使用缓存（半周期内）`;
@@ -473,6 +468,9 @@ async function switchPeriod(key) {
   loading = true; setButtonsDisabled(true); showProgress();
   const status = document.getElementById('status');
   try {
+    status.textContent = '获取成交量排行...';
+    const topInstIds = await fetchTopVolumeContracts();
+    currentInstIds = topInstIds;
     status.textContent = `加载 ${PERIODS[key].bar} 数据...`;
     const results = await fetchSinglePeriodForContracts(currentInstIds, key);
     allData = allData.map(row => ({ ...row, [key]: results[row.instId] !== undefined ? results[row.instId] : row[key] }));
